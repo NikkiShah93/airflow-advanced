@@ -19,20 +19,24 @@ def _branch(transformation):
         return 'filter_two_seaters_task'
     elif transformation == 'filter_fwds':
         return 'filter_fwds_task'
-def _filter_two_seaters_task(ti):
+def _filter_two_seaters_task(json_data):
     import pandas as pd
-    json_data = ti.xcom_pull(task_ids='extract_data')
+    # json_data = ti.xcom_pull(task_ids='extract_data')
     df = pd.read_json(json_data)
     df = df[df['Seats'] == 2]
-    ti.xcom_push(key='transform_result',value=df.to_json())
-    ti.xcom_push(key='transform_filename',value='two_seaters')
-def _filter_fwds_task(ti):
+    return {'transform_result':df.to_json(),
+            'transform_filename':'two_seaters'}
+    # ti.xcom_push(key='transform_result',value=df.to_json())
+    # ti.xcom_push(key='transform_filename',value='two_seaters')
+def _filter_fwds_task(json_data):
     import pandas as pd
-    json_data = ti.xcom_pull(task_ids='extract_data')
+    # json_data = ti.xcom_pull(task_ids='extract_data')
     df = pd.read_json(json_data)
     df = df[df['PowerTrain'] == 'FWD']
-    ti.xcom_push(key='transform_result',value=df.to_json())
-    ti.xcom_push(key='transform_filename',value='fwd')
+    return {'transform_result':df.to_json(),
+            'transform_filename':'fwd'}
+    # ti.xcom_push(key='transform_result',value=df.to_json())
+    # ti.xcom_push(key='transform_filename',value='fwd')
 def _write_csv(json_data, file_name, data_path):
     import pandas as pd
     # data_path = Variable.get('DATAPATH')
@@ -63,12 +67,20 @@ with DAG(
     filter_two_seater = PythonVirtualenvOperator(
         task_id='filter_two_seaters_task',
         python_callable=_filter_two_seaters_task,
-        requirements=['pandas']
+        requirements=['pandas'],
+        system_site_packages=True,
+        op_kwargs={
+           'json_data': "{{ ti.xcom_pull(key='transform_result') }}"
+        }
     )
     filter_fwd = PythonVirtualenvOperator(
         task_id='filter_fwds_task',
         python_callable=_filter_fwds_task,
-        requirements=['pandas']
+        requirements=['pandas'],
+        system_site_packages=True,
+        op_kwargs={
+           'json_data': "{{ ti.xcom_pull(key='transform_result') }}"
+        }
     )
     write_csv = PythonVirtualenvOperator(
         task_id='write_csv',

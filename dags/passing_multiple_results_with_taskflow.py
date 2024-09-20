@@ -21,7 +21,9 @@ def xcom_with_taskflow_api():
             'i3':190
         }
         return items
-    @task
+    @task(
+            multiple_outputs=True
+    )
     def calculate_sum_and_mean(items):
         total = 0
         for _, val in items.items():
@@ -29,12 +31,15 @@ def xcom_with_taskflow_api():
         mean = total / len(items)
         return {'total':total, 'mean':mean}
     @task
-    def print_result(total_and_mean):
-        print(f'The total amount is {total_and_mean["total"]}')
-        print(f'The mean amount is {total_and_mean["mean"]}')
+    def print_result(total, mean):
+        print(f'The total amount is {total}')
+        print(f'The mean amount is {mean}')
     
     items = item_mapping() 
     total_and_mean = calculate_sum_and_mean(items)
-    print_result(total_and_mean)
+    print_result(
+        total_and_mean['total'], 
+        total_and_mean['mean']
+        )
 
 xcom_with_taskflow_api()

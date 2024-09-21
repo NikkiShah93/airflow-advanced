@@ -36,8 +36,20 @@ def interoperating_with_taskflow_api():
         return df.to_json()
     @task.branch
     def branch():
-        val = Variable.get('TRANSFORMATION')
+        transformation = Variable.get('TRANSFORMATION')
         if transformation == 'filter_two_seaters':
-                return 'filter_two_seaters_task'
+            return 'filter_two_seaters_task'
         elif transformation == 'filter_fwds':
             return 'filter_fwds_task'
+    @task.virtualenv(
+        task_id='filter_two_seaters_task',
+        requirements=['pandas']
+    )
+    def filter_two_seaters_task(json_data):
+        import pandas as pd
+        df = pd.read_json(json_data)
+        df = df[df['Seats'] == 2]
+        return df.to_json()
+    json_data = read_file()
+
+interoperating_with_taskflow_api()

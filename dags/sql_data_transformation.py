@@ -6,7 +6,8 @@ from airflow.operators.python import PythonOperator, PythonVirtualenvOperator
 from airflow.decorators import dag,  task
 from airflow.models import Variable
 args = {
-    'url':Variable.get('FILE_URL'),
+    'car_url':Variable.get('CAR_FILE_URL'),
+    'category_url':Variable.get('CAT_FILE_URL'),
     'transformation':Variable.get('TRANSFORMATION'),
     'filepath':Variable.get('DATAPATH'),
     'filename':Variable.get('FILENAME'),
@@ -15,12 +16,11 @@ args = {
 default_args = {
     'owner':'nshk'
 }
-def _read_data(**kwargs):
+def _read_data(url):
     import pandas as pd
-    url = kwargs['url']
     df = pd.read_csv(url)
     return df.to_json()
-def _create_table(**kwargs):
+def _create_car_table(**kwargs):
     connection_id = kwargs['connection']
     sql = """
     CREATE TABLE IF NOT EXISTS car_data(
@@ -30,6 +30,21 @@ def _create_table(**kwargs):
     body_style TEXT NOT NULL,
     seat INT,
     price INT
+    );
+    """
+    sql_opt = SqliteOperator(
+        task_id='sqllite_create_table',
+        sqlite_conn_id=connection_id,
+        sql=sql
+    )
+    sql_opt.execute(context=None)
+def _create_category_table(**kwargs):
+    connection_id = kwargs['connection']
+    sql = """
+    CREATE TABLE IF NOT EXISTS car_category(
+    id INT PRIMARY KEY,
+    brand TEXT NOT NULL,
+    cetegory TEXT NOT NULL
     );
     """
     sql_opt = SqliteOperator(
@@ -49,30 +64,48 @@ def _create_table(**kwargs):
 def sql_data_transformation_api():
     create_db = BashOperator(
         task_id='create_db',
-        bash_command="""sudo apt-get install -y sqlite3 libsqlite3-dev \\
-            mkdir db && /usr/bin/sqlite3 /db/car_db.db
-            """
+        bash_command="""cd ../&&\\
+                        mkdir -p db &&\\
+                        cd db &&\\
+                        pwd &&\\
+                        echo creating the file&&\\
+                        touch car_db.db &&\\
+                        ls &&\\
+                        /usr/bin/sqlite3 /tmp/db/car_db.db &&\\
+                        /usr/bin/sqlite3 .database
+                        """
     )
-    read_data = PythonVirtualenvOperator(
-            task_id='read_data',
+    read_car_data = PythonVirtualenvOperator(
+            task_id='read_car_data',
             python_callable=_read_data,
             requirements=['pandas'],
             system_site_packages=False,
+            op_kwargs={'url':args['car_url']}
+        )
+    read_category_data = PythonVirtualenvOperator(
+            task_id='read_category_data',
+            python_callable=_read_data,
+            requirements=['pandas'],
+            system_site_packages=False,
+            op_kwargs={'url':args['category_url']}
+        )
+    create_car_table = PythonOperator(
+            task_id='create_car_table',
+            python_callable=_create_car_table,
             op_kwargs=args
         )
-    create_table = PythonOperator(
-            task_id='create_table',
-            python_callable=_create_table,
+    create_category_table = PythonOperator(
+            task_id='create_category_table',
+            python_callable=_create_category_table,
             op_kwargs=args
         )
-    
 
     @task.virtualenv(
-            task_id='insert_data',
+            task_id='insert_car_data',
             requirements=['pandas'],
             system_site_packages=True
     )
-    def insert_data(json_data, connection_id):
+    def insert_car_data(json_data, connection_id):
         import pandas as pd
         from airflow.operators.sqlite_operator import SqliteOperator
         df = pd.read_json(json_data)
@@ -84,16 +117,69 @@ def sql_data_transformation_api():
         parameters = df.to_dict(orient='records')
         for record in parameters:
             sqlite_opt = SqliteOperator(
-                task_id='insert_data',
+                task_id='insert_car_data',
                 sqlite_conn_id=connection_id,
                 sql=sql,
                 parameters=tuple(record.values())
             )
+    @task.virtualenv(
+            task_id='insert_category_data',
+            requirements=['pandas'],
+            system_site_packages=True
+    )
+    def insert_category_data(json_data, connection_id):
+        import pandas as pd
+        from airflow.operators.sqlite_operator import SqliteOperator
+        df = pd.read_json(json_data)
+        sql = """
+            INSERT INTO car_category (brand, category)
+            VALUES (?, ?)
+        """
+        df = df.applymap([lambda x:x.strip() if isinstance(x, str) else x])
+        parameters = df.to_dict(orient='records')
+        for record in parameters:
+            sqlite_opt = SqliteOperator(
+                task_id='insert_category_data',
+                sqlite_conn_id=connection_id,
+                sql=sql,
+                parameters=tuple(record.values())
+            )
+    @task
+    def join(connection_id):
+        sql = """
+            CREATE TABLE IF NOT EXISTS joined_car_category AS 
+            SELECT c.brand, 
+                   c.model, 
+                   c.body_style, 
+                   c.price,
+                   ct.category
+            FROM
+            car_data as c 
+            LEFT JOIN
+            car_category ct
+            ON c.brand = ct.brand;
+        """
+        
+        sqlite_opt = SqliteOperator(
+            task_id='join',
+            sqlite_conn_id=connection_id,
+            sql=sql
+        )
+        sqlite_opt.execute(context=None)
 
-    create_db >> create_table >> read_data >> insert_data(json_data=read_data.output, 
-                                             connection_id=args['connection'])
-    # json_data = read_data.output
-    # insert_data(json_data=json_data, connection_id=args['connection'])
+    create_db
+    # join = join(connection_id=args['connection'])
+
+    # create_db >> [create_car_table, create_category_table] >> read_car_data
+    # create_db >> [create_car_table, create_category_table] >> read_category_data
+    # read_car_data >> insert_car_data(json_data=read_car_data.output, 
+    #                 connection_id=args['connection']) >>\
+    #                 join,
+    # read_category_data >> insert_category_data(json_data=read_category_data.output, 
+    #                 connection_id=args['connection']) >> \
+    #                 join
+    
+        
 
 
 

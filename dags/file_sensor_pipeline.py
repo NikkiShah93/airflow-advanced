@@ -97,17 +97,18 @@ def file_sensor_pipeline_api():
     def write_file(file_dict):
         import pandas as pd
         print(file_dict)
-        # for f in dict(file_dict):
-        #     df = pd.read_json(file_dict[f])
-        #     df.to_csv(f'{OUTPUT_PATH}/{f}.csv',index=False)
+        for f in dict(file_dict):
+            df = pd.read_json(file_dict[f])
+            df.to_csv(f'{OUTPUT_PATH}/{f}.csv',index=False)
 
-    # remove_files = BashOperator(
-    #     task_id='remove_files',
-    #     bash_command=f'rm {FILE_PATH}'
-    # )
+    remove_files = BashOperator(
+        task_id='remove_files',
+        bash_command=f'rm {FILE_PATH}'
+    )
 
     creat_db >> create_table >> file_sensor >>\
-          insert_data() >> write_file(filter_by_type()) 
+          insert_data() >> write_file(filter_by_type()) >>\
+          remove_files
     
 file_sensor_pipeline_api()
 

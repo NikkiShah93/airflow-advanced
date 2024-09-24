@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 import csv
 import glob
+import time
 from airflow.utils.dates import days_ago
 from airflow.decorators import dag, task
 from airflow.providers.postgres.operators.postgres import PostgresOperator
@@ -9,11 +10,11 @@ from airflow.operators.bash import BashOperator
 from airflow.sensors.filesystem import FileSensor
 from airflow.models import Variable
 CWD = os.getcwd()
-DATA_PATH = Path(f'{CWD.replace('\\','/')}/datasets')
+DATA_PATH = f'{CWD.replace('\\','/')}/dags/datasets'
 # DATA_PATH.mkdir(parents=True, exist_ok=True)
 OUTPUT_PATH = Path(f'{CWD.replace('\\','/')}/output')
 OUTPUT_PATH.mkdir(parents=True, exist_ok=True)
-FILE_PATH = DATA_PATH/'laptop_*.csv'
+FILE_PATH = f"{DATA_PATH}/laptop_*.csv"
 FILE_COLS = ['Id','Company', 'Product', 'TypeName', 'Price_euros']
 CONN_ID = Variable.get('PG_CONNECTION')
 default_args = {
@@ -24,16 +25,16 @@ default_args = {
     default_args=default_args,
     start_date=days_ago(1),
     schedule_interval='@once',
-    template_searchpath=DATA_PATH,
+    template_searchpath=f'{CWD.replace('\\','/')}/dags/sql_statements',
     tags=['test','postgres','file_sensor','pipeline']
 )
 def file_sensor_pipeline_api():
-    creat_db = PostgresOperator(
-        task_id='create_db',
-        postgres_conn_id=CONN_ID,
-        autocommit=True,
-        sql="CREATE DATABASE laptops;"
-    )
+    # creat_db = PostgresOperator(
+    #     task_id='create_db',
+    #     postgres_conn_id=CONN_ID,
+    #     autocommit=True,
+    #     sql="CREATE DATABASE laptops;"
+    # )
     create_table = PostgresOperator(
         task_id='create_table',
         postgres_conn_id=CONN_ID,
@@ -41,7 +42,7 @@ def file_sensor_pipeline_api():
     )
     file_sensor = FileSensor(
         task_id='file_sensor',
-        filepath=str(FILE_PATH),
+        filepath=FILE_PATH,
         poke_interval=10,
         timeout=10*10
     )
@@ -51,7 +52,7 @@ def file_sensor_pipeline_api():
             INSERT INTO laptops ({','.join(FILE_COLS)})
             VALUES 
         """
-        for fn in glob.glob(str(FILE_PATH)):
+        for fn in glob.glob(FILE_PATH):
             with open(fn) as f:
                 next(f)
                 for r in f:
@@ -66,6 +67,7 @@ def file_sensor_pipeline_api():
             multiple_outputs=True
             )
     def filter_by_type():
+        time.sleep(30)
         sql = f"""
         SELECT {','.join(FILE_COLS)}
         FROM laptops
@@ -86,9 +88,8 @@ def file_sensor_pipeline_api():
             postgres_conn_id=CONN_ID,
             sql=sql.replace('placeholder','Ultrabook')
         )
-        return {'gaming':sql_opt_gaming,
-                'notebook':sql_opt_notebook,
-                'ultrabook':sql_opt_ultrabook}
+        
+    
     @task.virtualenv(
             task_id='write_files',
             requirements=['pandas'],
@@ -99,14 +100,15 @@ def file_sensor_pipeline_api():
         print(file_dict)
         for f in dict(file_dict):
             df = pd.read_json(file_dict[f])
-            df.to_csv(f'{OUTPUT_PATH}/{f}.csv',index=False)
+            df.to_csv(f'{OUTPUT_PATH}/{f}.csv', index=False, mode='a')
 
     remove_files = BashOperator(
         task_id='remove_files',
         bash_command=f'rm {FILE_PATH}'
     )
 
-    creat_db >> create_table >> file_sensor >>\
+    # creat_db >> 
+    create_table >> file_sensor >>\
           insert_data() >> write_file(filter_by_type()) >>\
           remove_files
     

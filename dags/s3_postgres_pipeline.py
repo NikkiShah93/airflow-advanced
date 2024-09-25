@@ -80,6 +80,7 @@ def s3_postgres_pipeline_api():
     insert_data = PythonOperator(
         task_id='insert_data',
         python_callable=_insert_data,
+        provide_context=True,
         op_kwargs={'file_path':'{{ ti.xcom_pull(task_ids="get_data_from_s3") }}',
                     'cols':cols}
     )

@@ -1,0 +1,72 @@
+import os
+from io import StringIO
+from pathlib import Path
+from datetime import datetime, timedelta
+from airflow.utils.dates import days_ago
+from airflow.decorators import dag, task
+from airflow.operators.bash import BashOperator
+from aifrow.operators.python import PythonOperator
+from airflow.hooks.S3_hook import S3Hook
+from airflow.providers.postgres.hooks.postgres import PostgresHook
+from airflow.models import Variable
+
+CWD = os.getcwd()
+DATA_PATH = f"{CWD.replace('\\','/')}/datasets"
+RAW_DATA_PATH=Path(f'{DATA_PATH}/raw')
+RAW_DATA_PATH.mkdir(exist_ok=True)
+PROC_DATA_PATH=Path(f'{DATA_PATH}/proc')
+PROC_DATA_PATH.mkdir(exist_ok=True)
+BUCKET_NAME=Variable.get('BUCKET_NAME')
+PREFIX=Variable.get('S3_PREFIX')
+S3_CONN='S3_CONNECTION'
+PG_CONN='POSTGRES'
+cols=Variable.get('COLS').split(',')
+default_args={
+    'owner':'nshk'
+}
+@dag(
+    dag_id='daily_data_agg',
+    default_args=default_args,
+    start_date=days_ago(1),
+    schedule_interval='@daily',
+    tags=['test','python', 'bash','pipeline']
+)
+def daily_data_agg():
+    @task(
+            task_id='get_data_from_s3',
+            templates_dict={'bucket_name':BUCKET_NAME,
+                            'prefix':PREFIX,
+                            'date':'{{ ds_nodash }}',
+                            'data_path':RAW_DATA_PATH}
+    )
+    def get_data_from_s3(**kwargs):
+        bucket_name = kwargs['templates_dict']['bucket_name']
+        prefix=kwargs['templates_dict']['prefix']
+        date = kwargs['templates_dict']['date']
+        data_path = kwargs['templates_dict']['data_path']
+        s3_hook = S3Hook(
+            aws_conn_id=S3_CONN
+        )
+        items = s3_hook.list_keys(bucket_name=bucket_name,
+                                  prefix=prefix)
+        for item in items:
+            content = s3_hook.read_key(bucket_name=bucket_name,
+                                       prefix=prefix,
+                                       key=item)
+            if isinstance(content, bytes):
+                content = StringIO(content.decode('utf-8'))
+            with open(f'{data_path}/{date}.csv', 'a') as f:
+                content.writelines(f)
+        return f'{data_path}/raw/{date}.csv'
+    @task(
+            task_id='data_processing',
+            requiremnets=['pandas'],
+            templates_dict={'file_path':"{{ ti.xcom_pull(task_ids='get_data_from_s3') }}",
+                            'data_path':PROC_DATA_PATH,
+                            'cols':cols}
+    )
+    def process_data(**kwargs):
+        import pandas as pd
+        file_path = kwargs['templates_dict']['file_path']
+        df = pd.read_csv(file_path)
+        df = df.dropna()

@@ -1,11 +1,13 @@
 import os
 from io import StringIO
 from pathlib import Path
+import csv
+from operator import itemgetter
 from datetime import datetime, timedelta
 from airflow.utils.dates import days_ago
 from airflow.decorators import dag, task
 from airflow.operators.bash import BashOperator
-from aifrow.operators.python import PythonOperator
+from airflow.operators.python import PythonOperator
 from airflow.hooks.S3_hook import S3Hook
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from airflow.models import Variable
@@ -49,24 +51,41 @@ def daily_data_agg():
         )
         items = s3_hook.list_keys(bucket_name=bucket_name,
                                   prefix=prefix)
+        items = [x for x in items if x.endswith('.csv')]
         for item in items:
             content = s3_hook.read_key(bucket_name=bucket_name,
-                                       prefix=prefix,
                                        key=item)
             if isinstance(content, bytes):
                 content = StringIO(content.decode('utf-8'))
             with open(f'{data_path}/{date}.csv', 'a') as f:
-                content.writelines(f)
-        return f'{data_path}/raw/{date}.csv'
+                f.writelines(content)
+        return f'{data_path}/{date}.csv'
     @task(
             task_id='data_processing',
-            requiremnets=['pandas'],
             templates_dict={'file_path':"{{ ti.xcom_pull(task_ids='get_data_from_s3') }}",
                             'data_path':PROC_DATA_PATH,
-                            'cols':cols}
+                            'cols':cols,
+                            'date':"{{ ds_nodash }}"}
     )
     def process_data(**kwargs):
-        import pandas as pd
         file_path = kwargs['templates_dict']['file_path']
-        df = pd.read_csv(file_path)
-        df = df.dropna()
+        data_path = kwargs['templates_dict']['data_path']
+        cols = kwargs['templates_dict']['cols']
+        date = kwargs['templates_dict']['date']
+        data = [tuple(cols)]
+        with open(file_path) as f:
+            content = csv.DictReader(f)
+            for row in content:
+                if '' in itemgetter(*cols)(row) or None in itemgetter(*cols)(row):
+                    continue
+                data.append(itemgetter(*cols)(row))
+        with open(f"{data_path}/{date}.csv",'a') as f:
+            for row in data:
+                print(row)
+                f.write(str(row))
+        return f"{data_path}/{date}.csv"
+            
+
+    get_data_from_s3() >> process_data()
+
+daily_data_agg()

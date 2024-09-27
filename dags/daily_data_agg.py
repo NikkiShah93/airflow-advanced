@@ -7,7 +7,10 @@ from datetime import datetime, timedelta
 from airflow.utils.dates import days_ago
 from airflow.decorators import dag, task
 from airflow.operators.bash import BashOperator
-from airflow.operators.python import PythonOperator
+from airflow.operators.python import (
+    PythonOperator, 
+    PythonVirtualenvOperator,
+    is_venv_installed)
 from airflow.hooks.S3_hook import S3Hook
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from airflow.models import Variable
@@ -28,7 +31,7 @@ default_args={
     'provide_context':True
 }
 @dag(
-    dag_id='daily_data_agg',
+    dag_id='daily_data_aggregation',
     default_args=default_args,
     start_date=days_ago(1),
     schedule_interval='@daily',
@@ -87,14 +90,26 @@ def daily_data_agg():
         return f"{data_path}/{date}.csv"
             
     @task.virtualenv(
-        task_id='data_cleaning',
-        requirements=['pandas'],
-        provide_context=True,
-        op_args=['{{ ds }}']
+            task_id = 'data_cleaning',
+            requirements=['pandas'],
+            templates_dict={'date':'{{ ds_nodash }}'},
+            system_site_packages=True
     )
-    def data_cleaning(ds, **kwargs):
-        print(ds)
-
+    def data_cleaning(date=None, **contxt):
+        print('inside venv')
+        print(date)
+        print(contxt)
+    # if not is_venv_installed():
+    #     print('Virtualenv is not installed!')
+    #     get_data_from_s3() >> process_data()
+    # else:
+    #     data_cleaning=PythonVirtualenvOperator(
+    #         task_id = 'data_cleaning',
+    #         python_callable=_data_cleaning,
+    #         requirements=['pandas'],
+    #         op_kwargs={'date':'{{ ds_nodash }}'},
+    #         system_site_packages=True
+    #     )
     get_data_from_s3() >> process_data() >> data_cleaning()
 
 daily_data_agg()

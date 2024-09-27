@@ -24,7 +24,8 @@ S3_CONN='S3_CONNECTION'
 PG_CONN='POSTGRES'
 cols=Variable.get('COLS').split(',')
 default_args={
-    'owner':'nshk'
+    'owner':'nshk',
+    'provide_context':True
 }
 @dag(
     dag_id='daily_data_agg',
@@ -85,7 +86,15 @@ def daily_data_agg():
                 f.write(str(row))
         return f"{data_path}/{date}.csv"
             
+    @task.virtualenv(
+        task_id='data_cleaning',
+        requirements=['pandas'],
+        provide_context=True,
+        op_args=['{{ ds }}']
+    )
+    def data_cleaning(ds, **kwargs):
+        print(ds)
 
-    get_data_from_s3() >> process_data()
+    get_data_from_s3() >> process_data() >> data_cleaning()
 
 daily_data_agg()
